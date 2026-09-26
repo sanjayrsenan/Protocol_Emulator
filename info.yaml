@@ -6,7 +6,7 @@ project:
   language:     "Verilog"
   clock_hz:     10000000
 
-  tiles: "1x1"
+  tiles: "6x4"
 
   top_module:  "tt_um_uart_test"
 

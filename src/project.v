@@ -27,17 +27,15 @@ module tt_um_spi_test (
     wire [7:0] rx_byte;
     wire [0:0] rx_count;
 
-    // Output assignments for dedicated pins
-    assign uo_out[0] = 1'b0; // Driven by SPI Clk inside instance
-    assign uo_out[1] = 1'b0; // Driven by MOSI inside instance
-    assign uo_out[2] = 1'b0; // Driven by CS_n inside instance
+    // Dedicated outputs:
+    // uo_out[2:0] driven directly by spi_inst below
     assign uo_out[3] = tx_ready;
     assign uo_out[4] = rx_dv;
-    assign uo_out[5] = rx_byte[0]; // Lower RX bits placed on dedicated outputs
+    assign uo_out[5] = rx_byte[0];
     assign uo_out[6] = rx_byte[1];
     assign uo_out[7] = rx_count[0];
 
-    // Output assignments for bidirectional pins
+    // Bidirectional outputs
     assign uio_out[1:0] = 2'b00;
     assign uio_out[7:2] = rx_byte[7:2];
 
@@ -46,7 +44,7 @@ module tt_um_spi_test (
         .SPI_MODE(0),              // Mode 0 (CPOL=0, CPHA=0)[cite: 22]
         .CLKS_PER_HALF_BIT(2),     // SPI clock = clk / 4[cite: 22]
         .MAX_BYTES_PER_CS(1),      // Transfer 1 byte per CS assertion[cite: 22]
-        .CS_INACTIVE_CLKS(1)       // 1 cycle CS idle time[cite: 22]
+        .CS_INACTIVE_CLKS(2)       // Set to 2 to ensure $clog2(2)-1 = 0 >= 0[cite: 22]
     ) spi_inst (
         .i_Rst_L(rst_n),           // Active-low reset matches Tiny Tapeout rst_n[cite: 22]
         .i_Clk(clk),               // System clock[cite: 22]
@@ -62,7 +60,7 @@ module tt_um_spi_test (
         .o_RX_DV(rx_dv),           // Data valid flag[cite: 22]
         .o_RX_Byte(rx_byte),       // Received byte[cite: 22]
 
-        // SPI Physical Interface
+        // SPI Physical Interface connected directly to dedicated outputs
         .o_SPI_Clk(uo_out[0]),     // SPI clock line[cite: 22]
         .i_SPI_MISO(uio_in[0]),    // SPI master-in slave-out[cite: 22]
         .o_SPI_MOSI(uo_out[1]),    // SPI master-out slave-in[cite: 22]

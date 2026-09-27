@@ -6,8 +6,7 @@ SIM ?= icarus
 FST ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = project.v i2c_master.v
-ifneq ($(GATES),yes)
+PROJECT_SOURCES = project.v SPI_Master.v SPI_Master_With_Single_CS.vifneq ($(GATES),yes)
 
 # RTL simulation:
 SIM_BUILD				= sim_build/rtl

@@ -1,97 +1,75 @@
 /*
- * Tiny Tapeout I2C Master Wrapper
- * Wraps Alex Forencich's i2c_master.v for area estimation
+ * Tiny Tapeout SPI Master Wrapper
+ * Wraps Nandland SPI_Master_With_Single_CS for area estimation
  */
 
 `default_nettype none
 
-module tt_um_i2c_test (
-    input  wire [7:0] ui_in,    // Dedicated inputs
-    output wire [7:0] uo_out,   // Dedicated outputs
-    input  wire [7:0] uio_in,   // Bidirectional inputs
-    output wire [7:0] uio_out,  // Bidirectional outputs
+module tt_um_spi_test (
+    input  wire [7:0] ui_in,    // Dedicated inputs: TX Byte to transmit[cite: 22]
+    output wire [7:0] uo_out,   // Dedicated outputs: SPI lines and status
+    input  wire [7:0] uio_in,   // Bidirectional inputs: uio[0]=MISO, uio[1]=TX_DV[cite: 22]
+    output wire [7:0] uio_out,  // Bidirectional outputs: RX data bits [7:2][cite: 22]
     output wire [7:0] uio_oe,   // Pin directions (1 = output, 0 = input)
-    input  wire       ena,
-    input  wire       clk,
-    input  wire       rst_n
+    input  wire       ena,      // Tiny Tapeout enable signal
+    input  wire       clk,      // System clock[cite: 22]
+    input  wire       rst_n     // Active-low reset[cite: 22]
 );
 
-    // Internal I2C wires from the master core
-    wire scl_i, scl_o, scl_t;
-    wire sda_i, sda_o, sda_t;
-    wire busy, bus_active, bus_control, missed_ack;
+    // Direction configuration:
+    // uio[0] = input (MISO)
+    // uio[1] = input (TX Data Valid pulse)
+    // uio[7:2] = outputs (RX Byte bits 7 to 2)
+    assign uio_oe = 8'b1111_1100;
 
-    // --- I2C Open-Drain Tri-State Logic ---
-    // SCL mapped to uio[0]
-    assign scl_i      = uio_in[0];
-    assign uio_out[0] = scl_o;
-    // In Alex's core, _t goes high when the line should float (input mode)
-    // Tiny Tapeout uio_oe is 1 for output (driving), 0 for input (floating)
-    assign uio_oe[0]  = ~scl_t; 
+    wire tx_ready;
+    wire rx_dv;
+    wire [7:0] rx_byte;
+    wire [0:0] rx_count;
 
-    // SDA mapped to uio[1]
-    assign sda_i      = uio_in[1];
-    assign uio_out[1] = sda_o;
-    assign uio_oe[1]  = ~sda_t; 
+    // Output assignments for dedicated pins
+    assign uo_out[0] = 1'b0; // Driven by SPI Clk inside instance
+    assign uo_out[1] = 1'b0; // Driven by MOSI inside instance
+    assign uo_out[2] = 1'b0; // Driven by CS_n inside instance
+    assign uo_out[3] = tx_ready;
+    assign uo_out[4] = rx_dv;
+    assign uo_out[5] = rx_byte[0]; // Lower RX bits placed on dedicated outputs
+    assign uo_out[6] = rx_byte[1];
+    assign uo_out[7] = rx_count[0];
 
-    // Tie off unused bidir pins to 0
-    assign uio_out[7:2] = 6'b0;
-    assign uio_oe[7:2]  = 6'b0;
+    // Output assignments for bidirectional pins
+    assign uio_out[1:0] = 2'b00;
+    assign uio_out[7:2] = rx_byte[7:2];
 
-    // --- Core Outputs ---
-    // Route status flags to the dedicated output pins
-    assign uo_out[0] = busy;
-    assign uo_out[1] = bus_active;
-    assign uo_out[2] = bus_control;
-    assign uo_out[3] = missed_ack;
-    assign uo_out[7:4] = 4'b0;
+    // Instantiate Nandland SPI Master with Chip Select
+    SPI_Master_With_Single_CS #(
+        .SPI_MODE(0),              // Mode 0 (CPOL=0, CPHA=0)[cite: 22]
+        .CLKS_PER_HALF_BIT(2),     // SPI clock = clk / 4[cite: 22]
+        .MAX_BYTES_PER_CS(1),      // Transfer 1 byte per CS assertion[cite: 22]
+        .CS_INACTIVE_CLKS(1)       // 1 cycle CS idle time[cite: 22]
+    ) spi_inst (
+        .i_Rst_L(rst_n),           // Active-low reset matches Tiny Tapeout rst_n[cite: 22]
+        .i_Clk(clk),               // System clock[cite: 22]
 
-    // Instantiate Alex Forencich's I2C Master
-    i2c_master i2c_inst (
-        .clk(clk),
-        .rst(~rst_n),
+        // TX signals
+        .i_TX_Count(1'b1),         // 1 byte per transfer[cite: 22]
+        .i_TX_Byte(ui_in),         // Input byte fed from ui_in[cite: 22]
+        .i_TX_DV(uio_in[1]),       // Start trigger pulse from uio_in[1][cite: 22]
+        .o_TX_Ready(tx_ready),     // Ready flag[cite: 22]
 
-        // Command AXI interface (driven by input pins for test)
-        .s_axis_cmd_address(ui_in[6:0]),
-        .s_axis_cmd_start(ui_in[7]),
-        .s_axis_cmd_read(1'b0),
-        .s_axis_cmd_write(1'b1),
-        .s_axis_cmd_write_multiple(1'b0),
-        .s_axis_cmd_stop(1'b0),
-        .s_axis_cmd_valid(1'b1),
-        .s_axis_cmd_ready(),
+        // RX signals
+        .o_RX_Count(rx_count),     // Byte index[cite: 22]
+        .o_RX_DV(rx_dv),           // Data valid flag[cite: 22]
+        .o_RX_Byte(rx_byte),       // Received byte[cite: 22]
 
-        // Data AXI interface (hardcoded to write 0xAA for synthesis)
-        .s_axis_data_tdata(8'hAA),
-        .s_axis_data_tvalid(1'b1),
-        .s_axis_data_tready(),
-        .s_axis_data_tlast(1'b1),
-
-        .m_axis_data_tdata(),
-        .m_axis_data_tvalid(),
-        .m_axis_data_tready(1'b1),
-        .m_axis_data_tlast(),
-
-        // I2C Physical Interface
-        .scl_i(scl_i),
-        .scl_o(scl_o),
-        .scl_t(scl_t),
-        .sda_i(sda_i),
-        .sda_o(sda_o),
-        .sda_t(sda_t),
-
-        // Status
-        .busy(busy),
-        .bus_control(bus_control),
-        .bus_active(bus_active),
-        .missed_ack(missed_ack),
-
-        // Configuration
-        .prescale(16'd100),
-        .stop_on_idle(1'b1)
+        // SPI Physical Interface
+        .o_SPI_Clk(uo_out[0]),     // SPI clock line[cite: 22]
+        .i_SPI_MISO(uio_in[0]),    // SPI master-in slave-out[cite: 22]
+        .o_SPI_MOSI(uo_out[1]),    // SPI master-out slave-in[cite: 22]
+        .o_SPI_CS_n(uo_out[2])     // Active-low chip select[cite: 22]
     );
 
-    // Suppress synthesis warnings for unused signals
+    // Suppress unused warnings
     wire _unused = &{ena, uio_in[7:2], 1'b0};
 
 endmodule

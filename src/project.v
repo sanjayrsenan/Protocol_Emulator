@@ -1,78 +1,97 @@
 /*
- * Tiny Tapeout UART Wrapper
- * Module name must start with tt_um_ and match top_module in info.yaml
+ * Tiny Tapeout I2C Master Wrapper
+ * Wraps Alex Forencich's i2c_master.v for area estimation
  */
 
 `default_nettype none
 
-module tt_um_uart_test (
-    input  wire [7:0] ui_in,    // Dedicated inputs: 8-bit TX data input
-    output wire [7:0] uo_out,   // Dedicated outputs: uo_out[0] = TXD, uo_out[1] = tx_busy
-    input  wire [7:0] uio_in,   // Bidirectional inputs: uio_in[0] = RXD
-    output wire [7:0] uio_out,  // Bidirectional outputs: RX data received (lower 8 bits)
+module tt_um_i2c_test (
+    input  wire [7:0] ui_in,    // Dedicated inputs
+    output wire [7:0] uo_out,   // Dedicated outputs
+    input  wire [7:0] uio_in,   // Bidirectional inputs
+    output wire [7:0] uio_out,  // Bidirectional outputs
     output wire [7:0] uio_oe,   // Pin directions (1 = output, 0 = input)
-    input  wire       ena,      // Tiny Tapeout enable signal (active high)
-    input  wire       clk,      // System clock
-    input  wire       rst_n     // Active-low reset
+    input  wire       ena,
+    input  wire       clk,
+    input  wire       rst_n
 );
 
-    // Set pin direction:
-    // uio[0] is RX input (0), uio[7:1] are outputs (1) for received data bits
-    assign uio_oe = 8'b1111_1110;
+    // Internal I2C wires from the master core
+    wire scl_i, scl_o, scl_t;
+    wire sda_i, sda_o, sda_t;
+    wire busy, bus_active, bus_control, missed_ack;
 
-    // Output assignments
-    wire txd_wire;
-    wire tx_busy_wire;
-    wire rx_busy_wire;
-    wire rx_overrun;
-    wire rx_frame_err;
-    wire [7:0] rx_data;
-    wire rx_valid;
+    // --- I2C Open-Drain Tri-State Logic ---
+    // SCL mapped to uio[0]
+    assign scl_i      = uio_in[0];
+    assign uio_out[0] = scl_o;
+    // In Alex's core, _t goes high when the line should float (input mode)
+    // Tiny Tapeout uio_oe is 1 for output (driving), 0 for input (floating)
+    assign uio_oe[0]  = ~scl_t; 
 
-    assign uo_out[0]   = txd_wire;
-    assign uo_out[1]   = tx_busy_wire;
-    assign uo_out[2]   = rx_valid;
-    assign uo_out[3]   = rx_busy_wire;
-    assign uo_out[4]   = rx_overrun;
-    assign uo_out[5]   = rx_frame_err;
-    assign uo_out[7:6] = 2'b00;
+    // SDA mapped to uio[1]
+    assign sda_i      = uio_in[1];
+    assign uio_out[1] = sda_o;
+    assign uio_oe[1]  = ~sda_t; 
 
-    // Output received data on bidirectional pins uio[7:1]
-    assign uio_out[0]   = 1'b0;          // Pin 0 is used for RX input
-    assign uio_out[7:1] = rx_data[7:1];
+    // Tie off unused bidir pins to 0
+    assign uio_out[7:2] = 6'b0;
+    assign uio_oe[7:2]  = 6'b0;
 
-    // Instantiate Alex Forencich's UART
-    uart #(
-        .DATA_WIDTH(8)
-    ) uart_inst (
+    // --- Core Outputs ---
+    // Route status flags to the dedicated output pins
+    assign uo_out[0] = busy;
+    assign uo_out[1] = bus_active;
+    assign uo_out[2] = bus_control;
+    assign uo_out[3] = missed_ack;
+    assign uo_out[7:4] = 4'b0;
+
+    // Instantiate Alex Forencich's I2C Master
+    i2c_master i2c_inst (
         .clk(clk),
-        .rst(~rst_n),              // Convert active-low rst_n to active-high reset
+        .rst(~rst_n),
 
-        // AXI-Stream Transmitter
-        .s_axis_tdata(ui_in),      // Data to transmit fed from input pins
-        .s_axis_tvalid(1'b0),      // Default tied low for area estimation
-        .s_axis_tready(),
+        // Command AXI interface (driven by input pins for test)
+        .s_axis_cmd_address(ui_in[6:0]),
+        .s_axis_cmd_start(ui_in[7]),
+        .s_axis_cmd_read(1'b0),
+        .s_axis_cmd_write(1'b1),
+        .s_axis_cmd_write_multiple(1'b0),
+        .s_axis_cmd_stop(1'b0),
+        .s_axis_cmd_valid(1'b1),
+        .s_axis_cmd_ready(),
 
-        // AXI-Stream Receiver
-        .m_axis_tdata(rx_data),
-        .m_axis_tvalid(rx_valid),
-        .m_axis_tready(1'b1),      // Always ready to accept received data
+        // Data AXI interface (hardcoded to write 0xAA for synthesis)
+        .s_axis_data_tdata(8'hAA),
+        .s_axis_data_tvalid(1'b1),
+        .s_axis_data_tready(),
+        .s_axis_data_tlast(1'b1),
 
-        // Physical UART serial lines
-        .rxd(uio_in[0]),           // Serial RX line connected to uio_in[0]
-        .txd(txd_wire),            // Serial TX line connected to uo_out[0]
+        .m_axis_data_tdata(),
+        .m_axis_data_tvalid(),
+        .m_axis_data_tready(1'b1),
+        .m_axis_data_tlast(),
 
-        // Status lines
-        .tx_busy(tx_busy_wire),
-        .rx_busy(rx_busy_wire),
-        .rx_overrun_error(rx_overrun),
-        .rx_frame_error(rx_frame_err),
+        // I2C Physical Interface
+        .scl_i(scl_i),
+        .scl_o(scl_o),
+        .scl_t(scl_t),
+        .sda_i(sda_i),
+        .sda_o(sda_o),
+        .sda_t(sda_t),
 
-        // Baud rate prescaler (fixed divider for synthesis testing)
-        .prescale(16'd100)
+        // Status
+        .busy(busy),
+        .bus_control(bus_control),
+        .bus_active(bus_active),
+        .missed_ack(missed_ack),
+
+        // Configuration
+        .prescale(16'd100),
+        .stop_on_idle(1'b1)
     );
 
-    // List unused signals to prevent synthesis warnings
-    wire _unused = &{ena, ui_in, uio_in[7:1], rx_data[0], 1'b0};
+    // Suppress synthesis warnings for unused signals
+    wire _unused = &{ena, uio_in[7:2], 1'b0};
 
 endmodule
